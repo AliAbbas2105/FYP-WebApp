@@ -4,6 +4,10 @@ from fastapi.staticfiles import StaticFiles
 from app.routers import auth, image
 from app.database import connect_to_mongo, close_mongo_connection
 import os
+from dotenv import load_dotenv
+
+# Load environment variables (e.g., GOOGLE_PLACES_API_KEY)
+load_dotenv()
 
 app = FastAPI(title="Gastric Cancer FL API", version="1.0.0")
 

@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import api from '../services/api'
 
 function Result() {
   const [data, setData] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [doctors, setDoctors] = useState([])
+  const [doctorError, setDoctorError] = useState('')
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -23,6 +27,77 @@ function Result() {
     }
   }, [])
 
+  // Fetch the latest result from backend to ensure we're not showing stale/session-only data
+  useEffect(() => {
+    const fetchLatest = async () => {
+      if (!data?.imageId) return
+      setRefreshing(true)
+      try {
+        const res = await api.get(`/image/${data.imageId}`)
+        if (res.data?.result) {
+          const parsed =
+            typeof res.data.result === 'string'
+              ? JSON.parse(res.data.result)
+              : res.data.result
+
+          const imageUrl = res.data.image_path
+            ? `http://localhost:8000${res.data.image_path}`
+            : data.imageDataUrl
+
+          const updated = {
+            imageDataUrl: imageUrl,
+            inference: parsed,
+            imageId: data.imageId,
+          }
+          setData(updated)
+          sessionStorage.setItem('gc_last_result', JSON.stringify(updated))
+        }
+      } catch (err) {
+        console.error('Failed to refresh result', err)
+      } finally {
+        setRefreshing(false)
+      }
+    }
+    fetchLatest()
+  }, [data?.imageId])
+
+  useEffect(() => {
+    const fetchDoctors = async (lat, lng) => {
+      try {
+        const res = await api.get('/auth/doctors/nearby', {
+          params: {
+            lat,
+            lng,
+            radius_km: 15,
+            limit: 10,
+          },
+        })
+        setDoctors(res.data || [])
+        setDoctorError('')
+      } catch (err) {
+        setDoctorError(err.response?.data?.detail || 'Unable to load nearby doctors')
+        setDoctors([])
+      }
+    }
+
+    if (!navigator.geolocation) {
+      fetchDoctors(undefined, undefined)
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords
+        fetchDoctors(latitude, longitude)
+      },
+      () => {
+        // Permission denied or unavailable: fallback to static list
+        fetchDoctors(undefined, undefined)
+      },
+      { timeout: 8000 }
+    )
+  }, [])
+
   if (!data) {
     return (
       <section className="card">
@@ -37,54 +112,37 @@ function Result() {
   }
 
   const { imageDataUrl, inference } = data
-  const isCancerous = inference.label === 'cancerous'
   const confidencePct = Math.round(inference.confidence * 100)
 
-  const buildRecommendations = (isCancerous, confidence) => {
+  const buildRecommendations = (confidence) => {
     const pct = Math.round(confidence * 100)
-    if (isCancerous) {
-      if (confidence >= 0.95) {
-        return [
-          `Urgent referral to gastroenterology for confirmatory endoscopy/biopsy (confidence ${pct}%).`,
-          'Document clinical symptoms and risk factors to aid triage.',
-          'Do not rely solely on AI; confirm with clinical evaluation.'
-        ]
-      }
+    if (confidence >= 0.8) {
       return [
-        `Refer to gastroenterology for diagnostic confirmation (confidence ${pct}%).`,
-        'Consider additional imaging views if available to improve assessment.',
-        'Discuss findings with the patient and plan timely follow-up.'
+        `High confidence (${pct}%). Consult a specialist for confirmation and next steps.`,
+        'Share the full report and clinical context with your clinician.',
+        'Plan appropriate follow-up or further diagnostics as advised.'
       ]
     }
-    if (confidence >= 0.95) {
+    if (confidence >= 0.5) {
       return [
-        `No immediate red flags detected (confidence ${pct}%).`,
-        'Continue routine screening per local guidelines.',
-        'Consult a clinician if symptoms persist or worsen.'
+        `Moderate confidence (${pct}%). Consider additional review or imaging if available.`,
+        'Discuss the finding with a clinician to decide next actions.',
+        'Ensure image quality is adequate before final conclusions.'
       ]
     }
     return [
-      `Low likelihood detected (confidence ${pct}%).`,
-      'If image quality is suboptimal, consider re-imaging for clarity.',
-      'Monitor symptoms; seek medical advice if concerns arise.'
+      `Low confidence (${pct}%). Acquire clearer imagery or additional views if possible.`,
+      'Re-run analysis after quality check; consult a clinician if concerns persist.',
+      'Use results as supportive information, not a sole diagnostic.'
     ]
   }
 
-  const getDummyDoctors = () => {
-    return [
-      { name: 'Dr. Aisha Rahman', title: 'Gastroenterologist', org: 'City Medical Center', email: 'a.rahman@example.org', phone: '+1-555-201-1100' },
-      { name: 'Dr. Kenji Nakamura', title: 'GI Oncologist', org: 'Regional Cancer Institute', email: 'k.nakamura@example.org', phone: '+1-555-201-2233' },
-      { name: 'Dr. Maria Gomez', title: 'Endoscopy Specialist', org: 'St. Mary Hospital', email: 'm.gomez@example.org', phone: '+1-555-201-3344' }
-    ]
-  }
-
-  const recommendations = buildRecommendations(isCancerous, inference.confidence)
-  const doctors = getDummyDoctors()
-  const verdict = isCancerous ? 'Image is cancerous' : 'Image is non-cancerous'
+  const recommendations = buildRecommendations(inference.confidence)
+  const verdict = `Predicted class: ${inference.label}`
 
   return (
     <section className="card">
-      <h2>Result</h2>
+      <h2>Result {refreshing ? '(updating...)' : ''}</h2>
       <div className="divider"></div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', alignItems: 'start' }}>
         <div style={{ position: 'relative' }}>
@@ -97,25 +155,11 @@ function Result() {
               border: '1px solid rgba(255,255,255,0.08)'
             }}
           />
-          {isCancerous && inference.confidence >= 0.90 && (
-            <div style={{
-              position: 'absolute',
-              left: '12px',
-              top: '12px',
-              padding: '6px 10px',
-              borderRadius: '8px',
-              background: 'rgba(255,0,0,0.85)',
-              color: 'white',
-              fontWeight: 600
-            }}>
-              Gastric cancer
-            </div>
-          )}
         </div>
         <div>
           <div className="feature">
             <h3>{verdict}</h3>
-            <p>Assumed accuracy: {confidencePct}%</p>
+            <p>Confidence: {confidencePct}%</p>
           </div>
           <div className="feature" style={{ marginTop: '10px' }}>
             <h3>Recommendations</h3>
@@ -126,7 +170,11 @@ function Result() {
             </ul>
           </div>
           <div className="feature" style={{ marginTop: '10px' }}>
-            <h3>Consult specialists</h3>
+            <h3>Consult specialists nearby</h3>
+            {doctorError && <div className="error" style={{ marginTop: '6px' }}>{doctorError}</div>}
+            {!doctorError && doctors.length === 0 && (
+              <div className="help" style={{ marginTop: '6px' }}>No nearby doctors available.</div>
+            )}
             <div style={{ display: 'grid', gap: '8px', marginTop: '8px' }}>
               {doctors.map((doc, idx) => (
                 <div key={idx} className="feature">
@@ -134,6 +182,9 @@ function Result() {
                     <div>
                       <strong>{doc.name}</strong>
                       <div className="help">{doc.title} · {doc.org}</div>
+                      {doc.distance_km !== undefined && (
+                        <div className="help">{doc.distance_km.toFixed(1)} km away</div>
+                      )}
                     </div>
                     <div>
                       <a className="btn" href={`mailto:${doc.email}`}>Email</a>
@@ -143,9 +194,6 @@ function Result() {
                 </div>
               ))}
             </div>
-          </div>
-          <div className="help" style={{ marginTop: '8px' }}>
-            This is a simulated result for UI demonstration only.
           </div>
           <div className="divider"></div>
           <button

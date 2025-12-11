@@ -7,6 +7,8 @@ from app.models.image import ImageCreate, ImageResponse
 from app.database import get_database
 from app.routers.auth import get_current_user
 from app.models.user import UserResponse
+from app.ml.inference import predict as run_model_predict
+import asyncio
 
 router = APIRouter()
 
@@ -86,9 +88,8 @@ async def predict_image(
             detail="Image not found"
         )
     
-    # Simulate ML model prediction (replace with actual model inference)
-    # This is a mock prediction similar to the original app.js
-    result = run_mock_inference(image)
+    # Run model inference without blocking the event loop
+    result = await run_model_in_executor(image)
     
     # Update image with result
     await db.images.update_one(
@@ -100,19 +101,16 @@ async def predict_image(
     updated_image = await db.images.find_one({"image_id": image_id})
     return ImageResponse(**updated_image)
 
-def run_mock_inference(image):
-    """Mock inference function - replace with actual ML model"""
-    # Generate deterministic result based on image_id
-    image_id_hash = abs(hash(image["image_id"])) % 1000
-    confidence = 0.90 + (image_id_hash / 1000) * 0.09  # 0.90 to 0.99
-    confidence = min(0.99, max(0.90, confidence))
-    
-    # Determine label based on confidence
-    label = "cancerous" if confidence > 0.6 else "non-cancerous"
-    
-    # Return result as JSON string format
-    import json
-    return json.dumps({"label": label, "confidence": round(confidence, 2)})
+def _local_image_path(image_doc):
+    # Stored path is like "/uploads/<file>"; convert to filesystem path
+    rel = image_doc["image_path"].lstrip("/")
+    return os.path.join(os.getcwd(), rel)
+
+async def run_model_in_executor(image):
+    """Execute model inference in a thread to keep FastAPI event loop responsive."""
+    loop = asyncio.get_running_loop()
+    image_path = _local_image_path(image)
+    return await loop.run_in_executor(None, lambda: run_model_predict(image_path))
 
 @router.get("/history", response_model=list[ImageResponse])
 async def get_image_history(

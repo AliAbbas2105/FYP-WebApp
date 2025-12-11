@@ -89,12 +89,15 @@ function Home() {
       try {
         result = JSON.parse(predictResponse.data.result)
       } catch {
-        // If result is not JSON, create a simple object
-        const resultStr = predictResponse.data.result || 'non-cancerous:0.90'
+        // If backend returns a simple string, surface it without faking defaults
+        const resultStr = predictResponse.data.result
+        if (!resultStr) {
+          throw new Error('Prediction result missing')
+        }
         const [label, confidence] = resultStr.split(':')
         result = {
-          label: label || 'non-cancerous',
-          confidence: parseFloat(confidence) || 0.90
+          label: label || resultStr,
+          confidence: confidence ? parseFloat(confidence) : null
         }
       }
       
@@ -293,7 +296,7 @@ function Home() {
             </button>
             <button 
               className="btn ghost" 
-              onClick={() => window.alert('This demo does not train or send data. It simulates a model response locally to show the intended UX.')}
+              onClick={() => window.alert('Your image is sent to the backend model for inference. Data is kept to your account history only.')}
             >
               How this works
             </button>
@@ -316,8 +319,8 @@ function Home() {
       </section>
 
       <section className="card" id="upload-section">
-        <h2>Try the prototype</h2>
-        <p className="help">Select an endoscopy image (JPG/PNG). The image stays in your browser. We'll show a simulated risk score to illustrate the UX.</p>
+        <h2>Run an analysis</h2>
+        <p className="help">Select an endoscopy image (JPG/PNG). The image is sent to the backend model for inference, and the prediction is returned to you.</p>
         <div className="divider"></div>
         <form id="inference-form" onSubmit={handleSubmit} noValidate>
           <div className="field">
@@ -379,7 +382,7 @@ function Home() {
                 {isAnalyzing ? 'Running analysis…' : 'Run analysis'}
               </button>
               <div style={{ marginTop: '12px' }}>
-                <div className="help">No result yet.</div>
+                <div className="help">Results appear after you run analysis.</div>
               </div>
             </div>
           </div>

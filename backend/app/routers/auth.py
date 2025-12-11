@@ -20,9 +20,41 @@ from app.utils.auth import (
     EMAIL_VERIFICATION_EXPIRY_HOURS
 )
 from app.utils.email import send_verification_email
+from app.utils.places import fetch_nearby_doctors
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+# Static doctor directory; in production this should be a proper provider search
+NEARBY_DOCTORS = [
+    {
+        "name": "Dr. Aisha Rahman",
+        "title": "Gastroenterologist",
+        "org": "City Medical Center",
+        "email": "a.rahman@example.org",
+        "phone": "+1-555-201-1100",
+        "distance_km": 2.4,
+    },
+    {
+        "name": "Dr. Kenji Nakamura",
+        "title": "GI Oncologist",
+        "org": "Regional Cancer Institute",
+        "email": "k.nakamura@example.org",
+        "phone": "+1-555-201-2233",
+        "distance_km": 6.1,
+    },
+    {
+        "name": "Dr. Maria Gomez",
+        "title": "Endoscopy Specialist",
+        "org": "St. Mary Hospital",
+        "email": "m.gomez@example.org",
+        "phone": "+1-555-201-3344",
+        "distance_km": 9.7,
+    },
+]
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     """Get current authenticated user from JWT token"""
@@ -238,3 +270,39 @@ async def debug_token(email: str = Query(..., description="User email to check t
         "token_preview": stored_token[:20] + "..." if stored_token and len(stored_token) > 20 else stored_token,
         "is_verified": user.get("is_verified", False)
     }
+
+
+@router.get("/doctors/nearby")
+async def get_nearby_doctors(
+    current_user: UserResponse = Depends(get_current_user),
+    limit: int = Query(10, ge=1, le=50),
+    lat: float | None = Query(None, description="Latitude"),
+    lng: float | None = Query(None, description="Longitude"),
+    radius_km: int = Query(10, ge=1, le=50),
+):
+    """
+    Return a list of nearby doctors.
+    - If lat/lng provided, query Google Places.
+    - Otherwise, return a static fallback list.
+    """
+    if lat is not None and lng is not None:
+        try:
+            doctors = await fetch_nearby_doctors(
+                lat, lng, radius_km=radius_km, max_results=limit
+            )
+            if doctors:
+                return doctors[:limit]
+        except HTTPException as exc:
+            # Log and fallback to static list on API errors (e.g., 403/400)
+            logger.warning(
+                "Nearby doctors API failed (status=%s): %s",
+                exc.status_code,
+                exc.detail,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Log and continue with fallback
+            logger.error("Nearby doctors lookup failed: %s", exc, exc_info=True)
+
+    # Fallback static list sorted by distance
+    sorted_docs = sorted(NEARBY_DOCTORS, key=lambda d: d["distance_km"])
+    return sorted_docs[:limit]
