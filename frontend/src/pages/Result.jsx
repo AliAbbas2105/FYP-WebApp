@@ -11,9 +11,7 @@ function Result() {
 
   useEffect(() => {
     const raw = sessionStorage.getItem('gc_last_result')
-    if (!raw) {
-      return
-    }
+    if (!raw) return
 
     try {
       const parsed = JSON.parse(raw)
@@ -27,7 +25,7 @@ function Result() {
     }
   }, [])
 
-  // Fetch the latest result from backend to ensure we're not showing stale/session-only data
+  // Refresh latest result (ensures we show updated backend predictions)
   useEffect(() => {
     const fetchLatest = async () => {
       if (!data?.imageId) return
@@ -61,6 +59,7 @@ function Result() {
     fetchLatest()
   }, [data?.imageId])
 
+  // Fetch nearby doctors
   useEffect(() => {
     const fetchDoctors = async (lat, lng) => {
       try {
@@ -68,8 +67,8 @@ function Result() {
           params: {
             lat,
             lng,
-            radius_km: 15,
-            limit: 10,
+            radius_km: 50,
+            limit: 20,
           },
         })
         setDoctors(res.data || [])
@@ -91,7 +90,6 @@ function Result() {
         fetchDoctors(latitude, longitude)
       },
       () => {
-        // Permission denied or unavailable: fallback to static list
         fetchDoctors(undefined, undefined)
       },
       { timeout: 8000 }
@@ -120,20 +118,20 @@ function Result() {
       return [
         `High confidence (${pct}%). Consult a specialist for confirmation and next steps.`,
         'Share the full report and clinical context with your clinician.',
-        'Plan appropriate follow-up or further diagnostics as advised.'
+        'Plan follow-up or further diagnostics as advised.'
       ]
     }
     if (confidence >= 0.5) {
       return [
         `Moderate confidence (${pct}%). Consider additional review or imaging if available.`,
         'Discuss the finding with a clinician to decide next actions.',
-        'Ensure image quality is adequate before final conclusions.'
+        'Ensure image quality is adequate before conclusions.'
       ]
     }
     return [
       `Low confidence (${pct}%). Acquire clearer imagery or additional views if possible.`,
       'Re-run analysis after quality check; consult a clinician if concerns persist.',
-      'Use results as supportive information, not a sole diagnostic.'
+      'Use results as supportive info, not a diagnosis.'
     ]
   }
 
@@ -144,6 +142,7 @@ function Result() {
     <section className="card">
       <h2>Result {refreshing ? '(updating...)' : ''}</h2>
       <div className="divider"></div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', alignItems: 'start' }}>
         <div style={{ position: 'relative' }}>
           <img
@@ -156,11 +155,13 @@ function Result() {
             }}
           />
         </div>
+
         <div>
           <div className="feature">
             <h3>{verdict}</h3>
             <p>Confidence: {confidencePct}%</p>
           </div>
+
           <div className="feature" style={{ marginTop: '10px' }}>
             <h3>Recommendations</h3>
             <ul style={{ marginTop: '6px', paddingLeft: '18px' }}>
@@ -169,33 +170,53 @@ function Result() {
               ))}
             </ul>
           </div>
+
           <div className="feature" style={{ marginTop: '10px' }}>
             <h3>Consult specialists nearby</h3>
             {doctorError && <div className="error" style={{ marginTop: '6px' }}>{doctorError}</div>}
+
             {!doctorError && doctors.length === 0 && (
               <div className="help" style={{ marginTop: '6px' }}>No nearby doctors available.</div>
             )}
+
             <div style={{ display: 'grid', gap: '8px', marginTop: '8px' }}>
-              {doctors.map((doc, idx) => (
+              {doctors.slice(0, 5).map((doc, idx) => (
                 <div key={idx} className="feature">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
                     <div>
                       <strong>{doc.name}</strong>
                       <div className="help">{doc.title} · {doc.org}</div>
+
                       {doc.distance_km !== undefined && (
                         <div className="help">{doc.distance_km.toFixed(1)} km away</div>
                       )}
+
+                      {/* NEW: Show phone + email as text too */}
+                      <div className="help">📧 {doc.email || "Not available"}</div>
+                      <div className="help">📞 {doc.phone || "Not available"}</div>
                     </div>
-                    <div>
-                      <a className="btn" href={`mailto:${doc.email}`}>Email</a>
-                      <a className="btn ghost" href={`tel:${doc.phone}`}>Call</a>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {doc.email ? (
+                        <a className="btn" href={`mailto:${doc.email}`}>Email</a>
+                      ) : (
+                        <button className="btn disabled" disabled>Email</button>
+                      )}
+
+                      {doc.phone ? (
+                        <a className="btn ghost" href={`tel:${doc.phone}`}>Call</a>
+                      ) : (
+                        <button className="btn ghost disabled" disabled>Call</button>
+                      )}
                     </div>
                   </div>
                 </div>
               ))}
             </div>
           </div>
+
           <div className="divider"></div>
+
           <button
             className="btn"
             onClick={() => {
@@ -212,4 +233,3 @@ function Result() {
 }
 
 export default Result
-

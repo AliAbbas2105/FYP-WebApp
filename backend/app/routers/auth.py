@@ -272,37 +272,52 @@ async def debug_token(email: str = Query(..., description="User email to check t
     }
 
 
+
+
 @router.get("/doctors/nearby")
 async def get_nearby_doctors(
     current_user: UserResponse = Depends(get_current_user),
-    limit: int = Query(10, ge=1, le=50),
+    limit: int = Query(20, ge=1, le=100),
     lat: float | None = Query(None, description="Latitude"),
     lng: float | None = Query(None, description="Longitude"),
-    radius_km: int = Query(10, ge=1, le=50),
+    radius_km: int = Query(50, ge=1, le=200),
 ):
     """
-    Return a list of nearby doctors.
-    - If lat/lng provided, query Google Places.
-    - Otherwise, return a static fallback list.
+    Always returns a list of doctors with:
+    name, title, org, email, phone, distance_km.
     """
+
+    def ensure_fields(doc: dict) -> dict:
+        """Guarantees required fields exist."""
+        return {
+            "name": doc.get("name", "Unknown Doctor"),
+            "title": doc.get("title", "Specialist"),
+            "org": doc.get("org", "Medical Center"),
+            "email": doc.get("email") or "not-provided@example.com",
+            "phone": doc.get("phone") or "+0000000000",
+            "distance_km": float(doc.get("distance_km", 0)),
+        }
+
+    # ------------------------------
+    # Try real location-based lookup
+    # ------------------------------
     if lat is not None and lng is not None:
         try:
             doctors = await fetch_nearby_doctors(
-                lat, lng, radius_km=radius_km, max_results=limit
+                lat=lat,
+                lng=lng,
+                radius_km=radius_km,
+                max_results=limit,
             )
-            if doctors:
-                return doctors[:limit]
-        except HTTPException as exc:
-            # Log and fallback to static list on API errors (e.g., 403/400)
-            logger.warning(
-                "Nearby doctors API failed (status=%s): %s",
-                exc.status_code,
-                exc.detail,
-            )
-        except Exception as exc:  # noqa: BLE001
-            # Log and continue with fallback
-            logger.error("Nearby doctors lookup failed: %s", exc, exc_info=True)
 
-    # Fallback static list sorted by distance
-    sorted_docs = sorted(NEARBY_DOCTORS, key=lambda d: d["distance_km"])
-    return sorted_docs[:limit]
+            if doctors:
+                return [ensure_fields(d) for d in doctors[:limit]]
+
+        except Exception as exc:
+            logger.error("Location lookup failed: %s", exc)
+
+    # -------------------------------------
+    # FALLBACK STATIC DOCTORS (Guaranteed)
+    # -------------------------------------
+    fallback = sorted(NEARBY_DOCTORS, key=lambda x: x["distance_km"])
+    return [ensure_fields(doc) for doc in fallback[:limit]]
