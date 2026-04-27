@@ -1,158 +1,135 @@
-# Gastric Cancer Detection - Federated Learning System
+# Gastric Cancer Analysis Web App
 
-A full-stack application for gastric cancer detection using Federated Learning, with FastAPI backend and React frontend.
+Full-stack project with:
+- **Frontend:** React + Vite
+- **Backend:** FastAPI + MongoDB
+- **Features:** auth, email verification, image analysis flow, result report PDF, nearby specialists lookup
 
-## Project Structure
+## Repository Structure
 
-```
-.
-├── backend/          # FastAPI backend
+```text
+website frontend/
+├── backend/
 │   ├── app/
-│   │   ├── models/   # Pydantic models
-│   │   ├── routers/  # API routes
-│   │   ├── utils/    # Utilities (auth, email)
-│   │   └── database.py
 │   ├── requirements.txt
 │   └── run.py
-├── frontend/         # React frontend
+├── frontend/
 │   ├── src/
-│   │   ├── components/
-│   │   ├── pages/
-│   │   ├── contexts/
-│   │   └── services/
-│   └── package.json
+│   ├── package.json
+│   └── .env.example
+├── app.js              # static/demo app (separate from React frontend)
+├── index.html          # static/demo app entry
 └── README.md
 ```
 
-## Features Implemented
+## Features
 
-- ✅ User authentication (Login/Signup)
-- ✅ JWT token-based authentication
-- ✅ Email verification
-- ✅ Role-based users (Doctor/Patient)
-- ✅ MongoDB database integration
-- ✅ UUID for user IDs
-- ✅ Patient fields: age, phone_number
-- ✅ Doctor fields: specialization, hospital_name, doctor_id
+- User signup/login with JWT
+- Role-based user model (doctor/patient)
+- Email verification flow
+- Image upload and prediction flow
+- Result page with recommendations
+- Lab report PDF download (fixed style)
+- Nearby specialists (Geoapify + fallback)
 
-## Setup Instructions
+## Prerequisites
 
-### Backend Setup
+- Python 3.10+
+- Node.js 18+
+- MongoDB (local or cloud)
+- SMTP credentials (for email verification)
+- Geoapify API key (for nearby specialists)
 
-1. Navigate to backend directory:
+## Local Setup
+
+### 1) Backend
+
 ```bash
 cd backend
-```
-
-2. Create a virtual environment (recommended):
-```bash
 python -m venv venv
-# Windows
 venv\Scripts\activate
-# Linux/Mac
-source venv/bin/activate
-```
-
-3. Install dependencies:
-```bash
 pip install -r requirements.txt
 ```
 
-4. Create `.env` file:
-```bash
-cp .env.example .env
+Create `backend/.env`:
+
+```env
+MONGODB_URL=mongodb://localhost:27017
+DATABASE_NAME=gastric_cancer_fl
+SECRET_KEY=replace_with_random_secret
+
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your_email@gmail.com
+SMTP_PASSWORD=your_app_password
+
+# Comma-separated allowed frontend URLs for CORS
+FRONTEND_URL=http://localhost:5173
 ```
 
-5. Edit `.env` file with your settings:
-   - `MONGODB_URL`: MongoDB connection string (default: `mongodb://localhost:27017`)
-   - `DATABASE_NAME`: Database name (default: `gastric_cancer_fl`)
-   - `SECRET_KEY`: A secret key for JWT tokens (generate a secure random string)
-   - `SMTP_USER` and `SMTP_PASSWORD`: For email verification (optional - if not set, verification links will be printed to console)
+Run backend:
 
-6. Make sure MongoDB is running on your system.
-
-7. Run the backend:
 ```bash
 python run.py
 ```
 
-The API will be available at `http://localhost:8000`
-- API Docs: `http://localhost:8000/docs`
+Backend URLs:
+- API base: `http://localhost:8000`
+- Swagger docs: `http://localhost:8000/docs`
 
-### Frontend Setup
+### 2) Frontend (React)
 
-1. Navigate to frontend directory:
 ```bash
 cd frontend
-```
-
-2. Install dependencies:
-```bash
 npm install
 ```
 
-3. Start development server:
+Create `frontend/.env`:
+
+```env
+VITE_API_BASE_URL=http://localhost:8000
+VITE_GEOAPIFY_API_KEY=your_geoapify_api_key_here
+```
+
+Run frontend:
+
 ```bash
 npm run dev
 ```
 
-The frontend will be available at `http://localhost:5173`
+Frontend URL: shown by Vite (usually `http://localhost:5173`)
 
-## API Endpoints
+## Deployment (Free)
 
-### Authentication
+- **Frontend:** Vercel (root: `frontend`)
+- **Backend:** Render (root: `backend`)
 
-- `POST /auth/signup` - Create a new user account
-  - Body: `{ username, email, password, role, ...role-specific-fields }`
-  - Returns: `{ message, user_id, email }`
+Required production env vars:
 
-- `POST /auth/login` - Login user
-  - Body: `{ email, password }`
-  - Returns: `{ access_token, token_type, user }`
+### Render (backend)
+- `MONGODB_URL`
+- `DATABASE_NAME`
+- `SECRET_KEY`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USER`
+- `SMTP_PASSWORD`
+- `FRONTEND_URL=https://your-frontend-domain.vercel.app`
 
-- `GET /auth/verify-email?token=<token>` - Verify email address
-  - Returns: `{ message }`
+### Vercel (frontend)
+- `VITE_API_BASE_URL=https://your-backend-domain.onrender.com`
+- `VITE_GEOAPIFY_API_KEY=...`
 
-- `GET /auth/me` - Get current user info (requires authentication)
-  - Headers: `Authorization: Bearer <token>`
-  - Returns: `UserResponse`
+## Important Git Notes
 
-## User Models
+- Never commit real `.env` files.
+- Keep only `.env.example` files in GitHub.
+- `.gitignore` is configured to ignore runtime/build/secret files.
 
-### Patient
-- `user_id` (UUID, auto-generated)
-- `username`
-- `email`
-- `password` (hashed)
-- `role`: "patient"
-- `age`
-- `phone_number`
-- `is_verified`
-- `created_at`
+## Troubleshooting
 
-### Doctor
-- `user_id` (UUID, auto-generated)
-- `doctor_id` (UUID, auto-generated)
-- `username`
-- `email`
-- `password` (hashed)
-- `role`: "doctor"
-- `specialization`
-- `hospital_name`
-- `is_verified`
-- `created_at`
-
-## Next Steps
-
-The following features are ready to be implemented:
-- Image upload endpoint
-- Image prediction endpoint
-- Image history endpoint
-- Dashboard pages for doctors and patients
-
-## Notes
-
-- Email verification: If SMTP credentials are not configured, verification links will be printed to the console for development purposes.
-- JWT tokens expire after 30 minutes by default (configurable in `.env`).
-- Email verification tokens expire after 24 hours (configurable in `.env`).
+- **CORS errors:** check `FRONTEND_URL` in backend env.
+- **Signup preflight 400:** ensure backend includes current frontend domain/port.
+- **Nearby doctors error:** verify `VITE_GEOAPIFY_API_KEY` and API category compatibility.
+- **Website/contact missing:** some providers do not publish full contact data.
 

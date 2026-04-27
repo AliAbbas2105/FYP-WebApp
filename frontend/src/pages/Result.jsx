@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { jsPDF } from 'jspdf'
 import api from '../services/api'
 
 function Result() {
@@ -61,7 +62,74 @@ function Result() {
 
   // Fetch nearby doctors
   useEffect(() => {
+    const normalizeUrl = (value) => {
+      if (!value || typeof value !== 'string') return null
+      const trimmed = value.trim()
+      if (!trimmed) return null
+      if (/^https?:\/\//i.test(trimmed)) return trimmed
+      return `https://${trimmed}`
+    }
+
+    const mapGeoapifyDoctor = (feature) => {
+      const props = feature.properties || {}
+      const raw = props.datasource?.raw || {}
+      const name = props.name || raw.name || 'Doctor'
+      const title = raw.speciality || raw.specialty || raw.healthcare || 'Specialist'
+      const org = raw.hospital || raw.operator || raw.brand || props.address_line2 || 'Nearby clinic'
+      const distanceMeters = typeof props.distance === 'number' ? props.distance : null
+      const distance_km = distanceMeters !== null ? distanceMeters / 1000 : undefined
+      const website = normalizeUrl(raw.website || raw.url || null)
+      const lat = typeof props.lat === 'number' ? props.lat : null
+      const lng = typeof props.lon === 'number' ? props.lon : null
+      const searchQuery = props.formatted || (lat !== null && lng !== null ? `${lat},${lng}` : '')
+      const mapsUrl =
+        searchQuery
+          ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(searchQuery)}`
+          : null
+      const googleSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(`${name} ${org}`)}`
+      return { name, title, org, distance_km, website, mapsUrl, googleSearchUrl }
+    }
+
+    const fetchDoctorsFromGeoapify = async (lat, lng, apiKey) => {
+      const url = new URL('https://api.geoapify.com/v2/places')
+      url.searchParams.set(
+        'categories',
+        [
+          'healthcare.clinic_or_praxis.gastroenterology',
+          'healthcare.clinic_or_praxis.general',
+          'healthcare.hospital',
+          'healthcare'
+        ].join(',')
+      )
+      url.searchParams.set('filter', `circle:${lng},${lat},50000`)
+      url.searchParams.set('bias', `proximity:${lng},${lat}`)
+      url.searchParams.set('limit', '30')
+      url.searchParams.set('apiKey', apiKey)
+
+      const res = await fetch(url.toString())
+      if (!res.ok) throw new Error(`Doctor API failed (${res.status})`)
+
+      const payload = await res.json()
+      const mapped = (payload.features || []).map(mapGeoapifyDoctor)
+      return mapped
+        .sort((a, b) => (a.distance_km ?? 9999) - (b.distance_km ?? 9999))
+        .slice(0, 5)
+    }
+
     const fetchDoctors = async (lat, lng) => {
+      const geoapifyKey = import.meta.env.VITE_GEOAPIFY_API_KEY
+
+      if (geoapifyKey) {
+        try {
+          const realDoctors = await fetchDoctorsFromGeoapify(lat, lng, geoapifyKey)
+          setDoctors(realDoctors)
+          setDoctorError('')
+          return
+        } catch {
+          // If external lookup fails, still provide backend list instead of empty UI.
+        }
+      }
+
       try {
         const res = await api.get('/auth/doctors/nearby', {
           params: {
@@ -72,7 +140,11 @@ function Result() {
           },
         })
         setDoctors(res.data || [])
-        setDoctorError('')
+        setDoctorError(
+          geoapifyKey
+            ? 'Live doctor API is unavailable right now, showing backend doctors.'
+            : 'Using backend doctors. Add VITE_GEOAPIFY_API_KEY for live nearby doctors.'
+        )
       } catch (err) {
         setDoctorError(err.response?.data?.detail || 'Unable to load nearby doctors')
         setDoctors([])
@@ -80,7 +152,8 @@ function Result() {
     }
 
     if (!navigator.geolocation) {
-      fetchDoctors(undefined, undefined)
+      setDoctorError('Location is not supported in this browser.')
+      setDoctors([])
       return
     }
 
@@ -90,7 +163,8 @@ function Result() {
         fetchDoctors(latitude, longitude)
       },
       () => {
-        fetchDoctors(undefined, undefined)
+        setDoctorError('Please allow location permission to fetch nearby doctors.')
+        setDoctors([])
       },
       { timeout: 8000 }
     )
@@ -137,6 +211,134 @@ function Result() {
 
   const recommendations = buildRecommendations(inference.confidence)
   const verdict = `Predicted class: ${inference.label}`
+
+  const formatDateTime = (value) => {
+    return new Intl.DateTimeFormat('en-GB', {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(value)
+  }
+
+  const imageToDataUrl = (source) =>
+    new Promise((resolve, reject) => {
+      if (!source) {
+        reject(new Error('No image source'))
+        return
+      }
+
+      if (source.startsWith('data:image')) {
+        resolve(source)
+        return
+      }
+
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas')
+          canvas.width = img.naturalWidth || img.width
+          canvas.height = img.naturalHeight || img.height
+          const ctx = canvas.getContext('2d')
+          if (!ctx) throw new Error('Canvas context unavailable')
+          ctx.drawImage(img, 0, 0)
+          resolve(canvas.toDataURL('image/jpeg', 0.92))
+        } catch (error) {
+          reject(error)
+        }
+      }
+      img.onerror = () => reject(new Error('Failed to load image'))
+      img.src = source
+    })
+
+  const handleDownloadReport = async () => {
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+    const createdAt = new Date()
+    const confidenceText = `${confidencePct}%`
+    const reportId = `GC-${data.imageId || 'LOCAL'}`
+
+    doc.setFillColor(22, 72, 99)
+    doc.rect(0, 0, 210, 24, 'F')
+    doc.setTextColor(255, 255, 255)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(16)
+    doc.text('Gastric Cancer AI Lab Report', 14, 15)
+
+    doc.setTextColor(35, 35, 35)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.text(`Report ID: ${reportId}`, 14, 32)
+    doc.text(`Generated: ${formatDateTime(createdAt)}`, 14, 37)
+
+    doc.setDrawColor(180, 180, 180)
+    doc.rect(14, 42, 86, 86)
+    doc.setFont('helvetica', 'bold')
+    doc.text('Submitted Image', 18, 49)
+
+    try {
+      const reportImage = await imageToDataUrl(imageDataUrl)
+      doc.addImage(reportImage, 'JPEG', 18, 53, 78, 70)
+    } catch {
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(9)
+      doc.text('Image preview unavailable', 20, 88)
+    }
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(12)
+    doc.text('Inference Summary', 108, 49)
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.text(`Predicted class: ${inference.label}`, 108, 58)
+    doc.text(`Confidence score: ${confidenceText}`, 108, 64)
+    doc.text(
+      'Note: This AI output is supportive information and not a definitive diagnosis.',
+      108,
+      72,
+      { maxWidth: 88 }
+    )
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(12)
+    doc.text('Recommendations', 14, 140)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    recommendations.forEach((rec, idx) => {
+      doc.text(`- ${rec}`, 14, 148 + idx * 8, { maxWidth: 182 })
+    })
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(12)
+    doc.text('Nearby Specialists', 14, 179)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    const topDoctors = doctors.slice(0, 3)
+    if (topDoctors.length === 0) {
+      doc.text('No specialist entries available at generation time.', 14, 187)
+    } else {
+      topDoctors.forEach((docItem, idx) => {
+        const y = 187 + idx * 11
+        const distance =
+          docItem.distance_km !== undefined ? ` (${docItem.distance_km.toFixed(1)} km)` : ''
+        doc.text(`${idx + 1}. ${docItem.name}${distance}`, 14, y)
+        doc.text(
+          `${docItem.title || 'Specialist'} | ${docItem.org || 'Independent'} | ${docItem.phone || 'N/A'}`,
+          18,
+          y + 5,
+          { maxWidth: 178 }
+        )
+      })
+    }
+
+    doc.setTextColor(100, 100, 100)
+    doc.setFontSize(8)
+    doc.text('Generated by Gastric Cancer AI frontend report template v1.0', 14, 286)
+
+    doc.save(`lab_report_${reportId}.pdf`)
+  }
 
   return (
     <section className="card">
@@ -191,22 +393,26 @@ function Result() {
                         <div className="help">{doc.distance_km.toFixed(1)} km away</div>
                       )}
 
-                      {/* NEW: Show phone + email as text too */}
-                      <div className="help">📧 {doc.email || "Not available"}</div>
-                      <div className="help">📞 {doc.phone || "Not available"}</div>
+                      <div className="help">Use Maps/Website for contact details.</div>
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {doc.email ? (
-                        <a className="btn" href={`mailto:${doc.email}`}>Email</a>
+                      {doc.website ? (
+                        <a className="btn ghost" href={doc.website} target="_blank" rel="noreferrer">
+                          Website
+                        </a>
                       ) : (
-                        <button className="btn disabled" disabled>Email</button>
+                        <a className="btn ghost" href={doc.googleSearchUrl} target="_blank" rel="noreferrer">
+                          Search on Google
+                        </a>
                       )}
 
-                      {doc.phone ? (
-                        <a className="btn ghost" href={`tel:${doc.phone}`}>Call</a>
+                      {doc.mapsUrl ? (
+                        <a className="btn ghost" href={doc.mapsUrl} target="_blank" rel="noreferrer">
+                          Open in Maps
+                        </a>
                       ) : (
-                        <button className="btn ghost disabled" disabled>Call</button>
+                        <button className="btn ghost disabled" disabled>Open in Maps</button>
                       )}
                     </div>
                   </div>
@@ -216,6 +422,10 @@ function Result() {
           </div>
 
           <div className="divider"></div>
+
+          <button className="btn ghost" onClick={handleDownloadReport} style={{ marginBottom: '10px' }}>
+            Download lab report (PDF)
+          </button>
 
           <button
             className="btn"

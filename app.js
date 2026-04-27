@@ -9,6 +9,8 @@
         route: window.location.hash.slice(1) || '/',
         errors: {}
     }
+    const DOCTOR_SEARCH_API_KEY = (window.GC_CONFIG && window.GC_CONFIG.GEOAPIFY_API_KEY) || ''
+    const DOCTOR_SPECIALTY_PATTERN = /(gastro|gastric|gi\b|oncolog|endoscop|entero)/i
     // Redirect unauthenticated users landing on root to /login
     if(!state.session && (state.route === '/' || state.route === '')){
         state.route = '/login'
@@ -474,23 +476,7 @@
         }
         const docWrap = s.querySelector('#doc-list')
         if(docWrap){
-            getDummyDoctors().forEach(doc => {
-                const card = document.createElement('div')
-                card.className = 'feature'
-                card.innerHTML = `
-                    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-                        <div>
-                            <strong>${doc.name}</strong>
-                            <div class="help">${doc.title} · ${doc.org}</div>
-                        </div>
-                        <div>
-                            <a class="btn" href="mailto:${doc.email}">Email</a>
-                            <a class="btn ghost" href="tel:${doc.phone}">Call</a>
-                        </div>
-                    </div>
-                `
-                docWrap.appendChild(card)
-            })
+            void populateNearbyDoctors(docWrap)
         }
         return s
     }
@@ -729,12 +715,125 @@
         ]
     }
 
-    function getDummyDoctors(){
-        return [
-            { name: 'Dr. Aisha Rahman', title: 'Gastroenterologist', org: 'City Medical Center', email: 'a.rahman@example.org', phone: '+1-555-201-1100' },
-            { name: 'Dr. Kenji Nakamura', title: 'GI Oncologist', org: 'Regional Cancer Institute', email: 'k.nakamura@example.org', phone: '+1-555-201-2233' },
-            { name: 'Dr. Maria Gomez', title: 'Endoscopy Specialist', org: 'St. Mary Hospital', email: 'm.gomez@example.org', phone: '+1-555-201-3344' }
-        ]
+    function geolocate(){
+        return new Promise((resolve, reject) => {
+            if(!navigator.geolocation){
+                reject(new Error('Geolocation is not supported in this browser.'))
+                return
+            }
+            navigator.geolocation.getCurrentPosition(
+                (position) => resolve({
+                    lat: position.coords.latitude,
+                    lon: position.coords.longitude
+                }),
+                () => reject(new Error('Location access denied. Please allow location to find nearby specialists.')),
+                { enableHighAccuracy: true, timeout: 8000, maximumAge: 120000 }
+            )
+        })
+    }
+
+    function buildDoctorFromFeature(feature){
+        const props = feature.properties || {}
+        const raw = props.datasource?.raw || {}
+        const name = props.name || raw.name || 'Doctor'
+        const title = raw.speciality || raw.specialty || raw.healthcare || 'Specialist'
+        const org = raw.hospital || raw.operator || raw.brand || props.address_line2 || 'Nearby clinic'
+        const distanceMeters = typeof props.distance === 'number' ? props.distance : null
+        const distance_km = distanceMeters !== null ? distanceMeters / 1000 : undefined
+        const phone = raw.phone || raw['contact:phone'] || null
+        const email = raw.email || raw['contact:email'] || null
+        const descriptor = `${name} ${title} ${org} ${props.formatted || ''}`
+        return { name, title, org, distance_km, phone, email, descriptor }
+    }
+
+    async function fetchNearbyDoctorsFromApi(lat, lon){
+        if(!DOCTOR_SEARCH_API_KEY){
+            throw new Error('Missing API key. Add GEOAPIFY_API_KEY in window.GC_CONFIG inside index.html.')
+        }
+        const endpoint = new URL('https://api.geoapify.com/v2/places')
+        endpoint.searchParams.set('categories', 'healthcare.doctor')
+        endpoint.searchParams.set('filter', `circle:${lon},${lat},50000`)
+        endpoint.searchParams.set('bias', `proximity:${lon},${lat}`)
+        endpoint.searchParams.set('limit', '30')
+        endpoint.searchParams.set('apiKey', DOCTOR_SEARCH_API_KEY)
+
+        const res = await fetch(endpoint.toString())
+        if(!res.ok){
+            throw new Error(`Doctor API request failed (${res.status})`)
+        }
+        const data = await res.json()
+        const features = Array.isArray(data.features) ? data.features : []
+        const mapped = features.map(buildDoctorFromFeature)
+        const filtered = mapped.filter((doc) => DOCTOR_SPECIALTY_PATTERN.test(doc.descriptor))
+        const finalList = (filtered.length ? filtered : mapped)
+            .sort((a, b) => (a.distance_km ?? 9999) - (b.distance_km ?? 9999))
+            .slice(0, 5)
+        return finalList
+    }
+
+    async function populateNearbyDoctors(docWrap){
+        docWrap.innerHTML = '<div class="help">Finding nearby specialists…</div>'
+        try{
+            const { lat, lon } = await geolocate()
+            const doctors = await fetchNearbyDoctorsFromApi(lat, lon)
+            docWrap.innerHTML = ''
+            if(!doctors.length){
+                docWrap.innerHTML = '<div class="help">No nearby relevant specialists found.</div>'
+                return
+            }
+            doctors.forEach((doc) => {
+                const card = document.createElement('div')
+                card.className = 'feature'
+
+                const left = document.createElement('div')
+                const name = document.createElement('strong')
+                name.textContent = doc.name
+                left.appendChild(name)
+
+                const title = document.createElement('div')
+                title.className = 'help'
+                title.textContent = `${doc.title} · ${doc.org}`
+                left.appendChild(title)
+
+                if(doc.distance_km !== undefined){
+                    const distance = document.createElement('div')
+                    distance.className = 'help'
+                    distance.textContent = `${doc.distance_km.toFixed(1)} km away`
+                    left.appendChild(distance)
+                }
+
+                const right = document.createElement('div')
+                right.style.display = 'flex'
+                right.style.gap = '6px'
+
+                if(doc.email){
+                    const email = document.createElement('a')
+                    email.className = 'btn'
+                    email.href = `mailto:${doc.email}`
+                    email.textContent = 'Email'
+                    right.appendChild(email)
+                }
+
+                if(doc.phone){
+                    const call = document.createElement('a')
+                    call.className = 'btn ghost'
+                    call.href = `tel:${doc.phone}`
+                    call.textContent = 'Call'
+                    right.appendChild(call)
+                }
+
+                const row = document.createElement('div')
+                row.style.display = 'flex'
+                row.style.justifyContent = 'space-between'
+                row.style.alignItems = 'center'
+                row.style.gap = '8px'
+                row.append(left, right)
+                card.appendChild(row)
+                docWrap.appendChild(card)
+            })
+        }catch(err){
+            docWrap.innerHTML = `<div class="help">${err.message || 'Unable to fetch doctors from API.'}</div>`
+        }
     }
 
     render()
