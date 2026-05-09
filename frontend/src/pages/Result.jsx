@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { jsPDF } from 'jspdf'
 import api from '../services/api'
+import { resolveUploadUrl } from '../services/apiBase'
 
 function Result() {
   const [data, setData] = useState(null)
@@ -39,9 +40,8 @@ function Result() {
               ? JSON.parse(res.data.result)
               : res.data.result
 
-          const imageUrl = res.data.image_path
-            ? `http://localhost:8000${res.data.image_path}`
-            : data.imageDataUrl
+          const imageUrl =
+            resolveUploadUrl(res.data.image_path) || data.imageDataUrl
 
           const updated = {
             imageDataUrl: imageUrl,
@@ -222,18 +222,33 @@ function Result() {
     }).format(value)
   }
 
-  const imageToDataUrl = (source) =>
-    new Promise((resolve, reject) => {
-      if (!source) {
-        reject(new Error('No image source'))
-        return
-      }
+  const imageToDataUrl = async (source) => {
+    if (!source) {
+      throw new Error('No image source')
+    }
 
-      if (source.startsWith('data:image')) {
-        resolve(source)
-        return
-      }
+    if (source.startsWith('data:image')) {
+      return source
+    }
 
+    // Prefer fetch for remote URLs (CORS-friendly on Render); avoids canvas taint issues.
+    if (/^https?:\/\//i.test(source)) {
+      try {
+        const res = await fetch(source, { mode: 'cors', credentials: 'omit' })
+        if (!res.ok) throw new Error(`Fetch failed ${res.status}`)
+        const blob = await res.blob()
+        return await new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result)
+          reader.onerror = reject
+          reader.readAsDataURL(blob)
+        })
+      } catch {
+        // fall through to Image + canvas
+      }
+    }
+
+    return new Promise((resolve, reject) => {
       const img = new Image()
       img.crossOrigin = 'anonymous'
       img.onload = () => {
@@ -252,6 +267,7 @@ function Result() {
       img.onerror = () => reject(new Error('Failed to load image'))
       img.src = source
     })
+  }
 
   const handleDownloadReport = async () => {
     const doc = new jsPDF({ unit: 'mm', format: 'a4' })

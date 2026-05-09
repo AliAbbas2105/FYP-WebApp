@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../services/api'
+import { resolveUploadUrl } from '../services/apiBase'
 
 function Home() {
   const [selectedFile, setSelectedFile] = useState(null)
@@ -101,10 +102,11 @@ function Home() {
         }
       }
       
-      // Get image URL from backend or use preview
-      const imageUrl = predictResponse.data.image_path 
-        ? `http://localhost:8000${predictResponse.data.image_path}`
-        : (preview || await toDataUrl(selectedFile))
+      // Full URL to /uploads/... on the same host as the API (not localhost in production)
+      const imageUrl =
+        resolveUploadUrl(predictResponse.data.image_path) ||
+        preview ||
+        (await toDataUrl(selectedFile))
 
       // Store in session for result page
       sessionStorage.setItem('gc_last_result', JSON.stringify({
