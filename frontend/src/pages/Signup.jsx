@@ -97,14 +97,14 @@ function Signup() {
         response.data.message ||
         'Account created successfully! Please check your email to verify your account.'
       const delivery = response.data.email_delivery
-      if (delivery === 'disabled' || response.data.email_sent === false) {
+      if (delivery === 'auto_verified') {
+        msg = response.data.message || msg
+      } else if (delivery === 'disabled' || response.data.email_sent === false) {
         msg +=
-          ' We could not send the verification email (SMTP not configured on the server). ' +
-          'In Render: set SMTP_USER and SMTP_PASSWORD (Gmail: enable 2FA and create an App Password). ' +
-          'Check Render logs for the verification link.'
+          ' No verification email was sent. On Render Free, SMTP is often blocked — add RESEND_API_KEY (resend.com) or set AUTO_VERIFY_EMAIL=true on the server for a demo-only skip. Check server logs for details.'
       } else if (delivery === 'queued') {
         msg +=
-          ' If nothing arrives in a few minutes, check Spam/Promotions. Still nothing? Open Render logs after signup — errors are logged if SMTP fails.'
+          ' If nothing arrives in a few minutes, check Spam/Promotions. Still nothing? Open server logs after signup — errors are logged if sending fails.'
       }
       setSuccessMessage(msg)
       

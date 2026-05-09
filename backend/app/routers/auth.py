@@ -19,7 +19,11 @@ from app.utils.auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     EMAIL_VERIFICATION_EXPIRY_HOURS
 )
-from app.utils.email import send_verification_email, is_smtp_configured
+from app.utils.email import (
+    send_verification_email,
+    is_email_delivery_configured,
+    is_auto_verify_signup,
+)
 from app.utils.places import fetch_nearby_doctors
 import logging
 
@@ -126,10 +130,16 @@ async def signup(user_data: SignupRequest, background_tasks: BackgroundTasks):
     # Hash password
     hashed_password = get_password_hash(user_data.password)
     
-    # Generate verification token
-    verification_token = generate_verification_token()
-    verification_token_expiry = datetime.utcnow() + timedelta(hours=EMAIL_VERIFICATION_EXPIRY_HOURS)
-    
+    # Verification: real email (Resend/SMTP) unless AUTO_VERIFY_EMAIL is set for demo deploys
+    use_auto_verify = is_auto_verify_signup()
+    verification_token = None
+    verification_token_expiry = None
+    if not use_auto_verify:
+        verification_token = generate_verification_token()
+        verification_token_expiry = datetime.utcnow() + timedelta(
+            hours=EMAIL_VERIFICATION_EXPIRY_HOURS
+        )
+
     # Create user document
     user_doc = {
         "user_id": user_id,
@@ -137,7 +147,7 @@ async def signup(user_data: SignupRequest, background_tasks: BackgroundTasks):
         "email": user_data.email,
         "role": user_data.role,
         "hashed_password": hashed_password,
-        "is_verified": False,
+        "is_verified": use_auto_verify,
         "verification_token": verification_token,
         "verification_token_expiry": verification_token_expiry,
         "created_at": datetime.utcnow()
@@ -155,9 +165,22 @@ async def signup(user_data: SignupRequest, background_tasks: BackgroundTasks):
     # Insert user
     await db.users.insert_one(user_doc)
 
-    if not is_smtp_configured():
+    if use_auto_verify:
         logger.warning(
-            "Signup for %s: SMTP not configured; verification email not sent.",
+            "AUTO_VERIFY_EMAIL is on: user %s marked verified without email — for demos only.",
+            user_data.email,
+        )
+        return {
+            "message": "Account created. Email verification is skipped (AUTO_VERIFY_EMAIL). You can log in now.",
+            "user_id": user_id,
+            "email": user_data.email,
+            "email_delivery": "auto_verified",
+            "email_sent": None,
+        }
+
+    if not is_email_delivery_configured():
+        logger.warning(
+            "Signup for %s: no Resend/SMTP config; verification email not sent. Set RESEND_API_KEY or AUTO_VERIFY_EMAIL=true.",
             user_data.email,
         )
         return {
@@ -168,7 +191,7 @@ async def signup(user_data: SignupRequest, background_tasks: BackgroundTasks):
             "email_sent": False,
         }
 
-    # Do not block the HTTP response on SMTP (can take 10–30s); send after response is returned
+    # Do not block the HTTP response on SMTP; Resend is fast, still queue both
     background_tasks.add_task(
         send_verification_email,
         user_data.email,

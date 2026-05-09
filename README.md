@@ -110,11 +110,17 @@ Required production env vars:
 - `MONGODB_URL`
 - `DATABASE_NAME`
 - `SECRET_KEY`
-- `SMTP_HOST`
-- `SMTP_PORT`
-- `SMTP_USER`
-- `SMTP_PASSWORD`
 - `FRONTEND_URL=https://your-frontend-domain.vercel.app`
+
+**Email on Render Free:** outbound **SMTP (ports 25 / 465 / 587) is often blocked**, so Gmail SMTP may fail with `Network is unreachable`. Pick one approach:
+
+1. **Resend (HTTPS API, works on free Render):** set `RESEND_API_KEY` and `RESEND_FROM` (verified domain or Resend test sender per [resend.com](https://resend.com) docs).
+
+2. **Skip email verification (demos / FYP only):** set **`AUTO_VERIFY_EMAIL=true`**. New users are **verified immediately** at signup; no mail is sent. **Do not use for production** (anyone can register and use the app with any email).
+
+3. **SMTP:** use `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` when the host allows it (e.g. local dev or a paid host that does not block SMTP).
+
+Sending order when mail is used: **Resend → SMTP**.
 
 Recommended Render settings:
 - **Root Directory:** `backend`
@@ -142,4 +148,5 @@ Recommended Vercel settings:
 - **Signup preflight 400:** ensure backend includes current frontend domain/port.
 - **Nearby doctors error:** verify `VITE_GEOAPIFY_API_KEY` and API category compatibility.
 - **Website/contact missing:** some providers do not publish full contact data.
+- **Verification email / `[Errno 101] Network is unreachable` on Render:** use **`RESEND_API_KEY`**, or **`AUTO_VERIFY_EMAIL=true`** for demo-only signup without mail, or upgrade to a plan that allows SMTP.
 
