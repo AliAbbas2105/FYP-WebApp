@@ -104,6 +104,12 @@ Frontend URL: shown by Vite (usually `http://localhost:5173`)
 - **Frontend:** Vercel (root: `frontend`)
 - **Backend:** Render (root: `backend`)
 
+Optional root scripts (`website frontend/package.json`) can build frontend from repo root:
+
+```bash
+npm run deploy:frontend
+```
+
 Required production env vars:
 
 ### Render (backend)
@@ -116,9 +122,19 @@ Required production env vars:
 - `SMTP_PASSWORD`
 - `FRONTEND_URL=https://your-frontend-domain.vercel.app`
 
+Recommended Render settings:
+- **Root Directory:** `backend`
+- **Build Command:** `pip install -r requirements.txt`
+- **Start Command:** `python run.py`
+
 ### Vercel (frontend)
 - `VITE_API_BASE_URL=https://your-backend-domain.onrender.com`
 - `VITE_GEOAPIFY_API_KEY=...`
+
+Recommended Vercel settings:
+- **Root Directory:** `frontend`
+- **Build Command:** `npm run build`
+- **Output Directory:** `dist`
 
 ## Important Git Notes
 
