@@ -1,0 +1,9 @@
+{
+  "name": "gastric-cancer-fl-backend",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "python run.py",
+    "start": "python run.py"
+  }
+}

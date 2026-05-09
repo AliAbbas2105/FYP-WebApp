@@ -104,12 +104,6 @@ Frontend URL: shown by Vite (usually `http://localhost:5173`)
 - **Frontend:** Vercel (root: `frontend`)
 - **Backend:** Render (root: `backend`)
 
-Optional root scripts (`website frontend/package.json`) can build frontend from repo root:
-
-```bash
-npm run deploy:frontend
-```
-
 Required production env vars:
 
 ### Render (backend)
