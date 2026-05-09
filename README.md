@@ -119,7 +119,7 @@ Required production env vars:
 Recommended Render settings:
 - **Root Directory:** `backend`
 - **Build Command:** `pip install -r requirements.txt`
-- **Start Command:** `python run.py`
+- **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 
 ### Vercel (frontend)
 - `VITE_API_BASE_URL=https://your-backend-domain.onrender.com`
