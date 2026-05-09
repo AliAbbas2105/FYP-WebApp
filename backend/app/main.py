@@ -14,14 +14,19 @@ app = FastAPI(title="Gastric Cancer FL API", version="1.0.0")
 frontend_url_env = os.getenv("FRONTEND_URL", "")
 frontend_urls = [url.strip() for url in frontend_url_env.split(",") if url.strip()]
 
+# CORS: localhost + deployed frontend; FRONTEND_URL can add more (comma-separated)
+cors_origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://gastricfrontend.vercel.app",
+    *frontend_urls,
+]
+allow_origins = list(dict.fromkeys(cors_origins))
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        *frontend_urls,
-    ],
+    allow_origins=allow_origins,
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
