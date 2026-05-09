@@ -4,6 +4,7 @@ import os
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 
 from dotenv import load_dotenv
 
@@ -16,6 +17,11 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
 SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "").lower() in ("1", "true", "yes")
+SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Gastric Cancer FL").strip()
+
+
+def is_smtp_configured() -> bool:
+    return bool(SMTP_USER and SMTP_PASSWORD)
 
 
 def _verification_link_base() -> str:
@@ -29,12 +35,11 @@ def _verification_link_base() -> str:
     fe = os.getenv("FRONTEND_URL", "").strip()
     if fe:
         return fe.split(",")[0].strip().rstrip("/")
-    # Deployed SPA default for this project (override with FRONTEND_URL on Render)
     return "https://gastricfrontend.vercel.app"
 
 
 def _send_smtp(msg: MIMEMultipart) -> None:
-    timeout = 30
+    timeout = 25
     use_ssl = SMTP_USE_SSL or SMTP_PORT == 465
     if use_ssl:
         server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=timeout)
@@ -56,34 +61,40 @@ async def send_verification_email(email: str, token: str, username: str) -> bool
     base = _verification_link_base()
     verification_link = f"{base}/verify-email?token={token}"
 
-    if not SMTP_USER or not SMTP_PASSWORD:
+    if not is_smtp_configured():
         logger.warning(
             "SMTP_USER or SMTP_PASSWORD not set — verification email was NOT sent. "
-            "Set both in Render (Gmail: use an App Password). Link for manual testing: %s",
+            "Set both in Render (Gmail: use an App Password). Link: %s",
             verification_link,
         )
         return False
 
-    msg = MIMEMultipart()
-    msg["From"] = SMTP_USER
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "Verify your email — Gastric Cancer FL"
+    msg["From"] = formataddr((SMTP_FROM_NAME, SMTP_USER))
     msg["To"] = email
-    msg["Subject"] = "Verify Your Email - Gastric Cancer FL"
+    msg["Reply-To"] = SMTP_USER
 
-    body = f"""
-    <html>
-    <body>
+    plain = (
+        f"Welcome to Gastric Cancer FL, {username}.\n\n"
+        f"Verify your email by opening this link in your browser:\n{verification_link}\n\n"
+        f"This link expires in 24 hours.\n"
+        f"If you did not sign up, ignore this message.\n"
+    )
+    html = f"""
+    <html><body>
         <h2>Welcome to Gastric Cancer FL, {username}!</h2>
-        <p>Thank you for signing up. Please verify your email address by clicking the link below:</p>
-        <p><a href="{verification_link}" style="background-color: #5bd0ff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Verify Email</a></p>
-        <p>Or copy and paste this link into your browser:</p>
-        <p>{verification_link}</p>
-        <p>This link will expire in 24 hours.</p>
-        <p>If you didn't create an account, please ignore this email.</p>
-    </body>
-    </html>
+        <p>Please verify your email by clicking the button below:</p>
+        <p><a href="{verification_link}" style="background-color:#2563eb;color:#fff;padding:10px 20px;
+        text-decoration:none;border-radius:6px;display:inline-block;">Verify email</a></p>
+        <p>Or paste this link into your browser:</p>
+        <p style="word-break:break-all;">{verification_link}</p>
+        <p><small>This link expires in 24 hours. If you did not sign up, ignore this email.</small></p>
+    </body></html>
     """
 
-    msg.attach(MIMEText(body, "html"))
+    msg.attach(MIMEText(plain, "plain", "utf-8"))
+    msg.attach(MIMEText(html, "html", "utf-8"))
 
     try:
         await asyncio.to_thread(_send_smtp, msg)
@@ -91,8 +102,7 @@ async def send_verification_email(email: str, token: str, username: str) -> bool
         return True
     except Exception:
         logger.exception(
-            "Failed to send verification email to %s (check SMTP_*, Gmail App Password, firewall). "
-            "Intended link: %s",
+            "SMTP failed for %s — check Render env SMTP_* and Gmail App Password. Link was: %s",
             email,
             verification_link,
         )

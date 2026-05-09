@@ -96,11 +96,15 @@ function Signup() {
       let msg =
         response.data.message ||
         'Account created successfully! Please check your email to verify your account.'
-      if (response.data.email_sent === false) {
+      const delivery = response.data.email_delivery
+      if (delivery === 'disabled' || response.data.email_sent === false) {
         msg +=
           ' We could not send the verification email (SMTP not configured on the server). ' +
-          'In Render: set SMTP_USER and SMTP_PASSWORD (Gmail needs an App Password). ' +
-          'Check Render logs for a line with the verification link, or set FRONTEND_URL to your Vercel URL.'
+          'In Render: set SMTP_USER and SMTP_PASSWORD (Gmail: enable 2FA and create an App Password). ' +
+          'Check Render logs for the verification link.'
+      } else if (delivery === 'queued') {
+        msg +=
+          ' If nothing arrives in a few minutes, check Spam/Promotions. Still nothing? Open Render logs after signup — errors are logged if SMTP fails.'
       }
       setSuccessMessage(msg)
       

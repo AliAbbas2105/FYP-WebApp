@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Query
+from fastapi import APIRouter, HTTPException, Depends, status, Query, BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer
 from datetime import datetime, timedelta
 import uuid
@@ -19,7 +19,7 @@ from app.utils.auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     EMAIL_VERIFICATION_EXPIRY_HOURS
 )
-from app.utils.email import send_verification_email
+from app.utils.email import send_verification_email, is_smtp_configured
 from app.utils.places import fetch_nearby_doctors
 import logging
 
@@ -83,8 +83,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     return UserResponse(**user)
 
 @router.post("/signup", response_model=dict, status_code=status.HTTP_201_CREATED)
-async def signup(user_data: SignupRequest):
-    """Sign up a new user (doctor or patient)"""
+async def signup(user_data: SignupRequest, background_tasks: BackgroundTasks):
+    """Sign up a new user (doctor or patient). Verification email is sent in the background so signup stays fast."""
     db = get_database()
     
     # Validate role-specific fields
@@ -154,17 +154,34 @@ async def signup(user_data: SignupRequest):
     
     # Insert user
     await db.users.insert_one(user_doc)
-    
-    # Send verification email (requires SMTP_USER + SMTP_PASSWORD on Render)
-    email_sent = await send_verification_email(
-        user_data.email, verification_token, user_data.username
+
+    if not is_smtp_configured():
+        logger.warning(
+            "Signup for %s: SMTP not configured; verification email not sent.",
+            user_data.email,
+        )
+        return {
+            "message": "User created successfully. Please check your email to verify your account.",
+            "user_id": user_id,
+            "email": user_data.email,
+            "email_delivery": "disabled",
+            "email_sent": False,
+        }
+
+    # Do not block the HTTP response on SMTP (can take 10–30s); send after response is returned
+    background_tasks.add_task(
+        send_verification_email,
+        user_data.email,
+        verification_token,
+        user_data.username,
     )
 
     return {
-        "message": "User created successfully. Please check your email to verify your account.",
+        "message": "User created successfully. A verification email is being sent — check your inbox and spam folder.",
         "user_id": user_id,
         "email": user_data.email,
-        "email_sent": email_sent,
+        "email_delivery": "queued",
+        "email_sent": None,
     }
 
 @router.post("/login", response_model=TokenResponse)
