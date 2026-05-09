@@ -6,7 +6,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import formataddr
 
-import httpx
+import resend
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,19 +20,21 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
 SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "").lower() in ("1", "true", "yes")
 SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Gastric Cancer FL").strip()
 
-# Resend HTTPS API — works on Render free tier (SMTP 25/465/587 often blocked).
+# Resend (official SDK over HTTPS) — works on Render free tier where SMTP is blocked.
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 RESEND_FROM = os.getenv(
     "RESEND_FROM",
     "Gastric Cancer FL <onboarding@resend.dev>",
 ).strip()
 
-# Demo / FYP deployment: skip email and mark user verified at signup (no third-party email).
+
 def is_auto_verify_signup() -> bool:
     return os.getenv("AUTO_VERIFY_EMAIL", "").lower() in ("1", "true", "yes")
 
 
 def is_smtp_configured() -> bool:
+    if os.getenv("SKIP_SMTP", "").lower() in ("1", "true", "yes"):
+        return False
     return bool(SMTP_USER and SMTP_PASSWORD)
 
 
@@ -95,34 +97,36 @@ def _send_smtp(msg: MIMEMultipart) -> None:
             pass
 
 
-async def _send_via_resend(to_email: str, subject: str, html: str, plain: str) -> bool:
+def _send_via_resend_sync(to_email: str, subject: str, html: str, plain: str) -> bool:
+    """Use official Resend SDK (sync); called from asyncio.to_thread."""
+    resend.api_key = RESEND_API_KEY
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                "https://api.resend.com/emails",
-                headers={
-                    "Authorization": f"Bearer {RESEND_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "from": RESEND_FROM,
-                    "to": [to_email],
-                    "subject": subject,
-                    "html": html,
-                    "text": plain,
-                },
-            )
-        if resp.status_code >= 400:
-            logger.error(
-                "Resend API error %s: %s",
-                resp.status_code,
-                resp.text[:500],
-            )
-            return False
+        resend.Emails.send(
+            {
+                "from": RESEND_FROM,
+                "to": [to_email],
+                "subject": subject,
+                "html": html,
+                "text": plain,
+            }
+        )
         return True
-    except Exception:
-        logger.exception("Resend request failed for %s", to_email)
+    except resend.exceptions.ResendError as e:
+        logger.error(
+            "Resend API rejected email to %s: %s",
+            to_email,
+            getattr(e, "message", str(e))[:500],
+        )
         return False
+    except Exception:
+        logger.exception("Resend send failed for %s", to_email)
+        return False
+
+
+async def _send_via_resend(to_email: str, subject: str, html: str, plain: str) -> bool:
+    return await asyncio.to_thread(
+        _send_via_resend_sync, to_email, subject, html, plain
+    )
 
 
 async def send_verification_email(email: str, token: str, username: str) -> bool:
@@ -161,24 +165,22 @@ async def send_verification_email(email: str, token: str, username: str) -> bool
         await asyncio.to_thread(_send_smtp, msg)
         logger.info("Verification email sent via SMTP to %s", email)
         return True
-    except OSError as e:
-        errno = getattr(e, "errno", None)
-        if errno == 101 or "Network is unreachable" in str(e):
-            logger.error(
-                "SMTP failed: network unreachable (common on Render Free). "
-                "Set RESEND_API_KEY, or AUTO_VERIFY_EMAIL=true for demo, or use paid Render. Link: %s",
+    except Exception as e:
+        msg_l = str(e).lower()
+        errn = getattr(e, "errno", None)
+        if (
+            errn == 101
+            or "network is unreachable" in msg_l
+            or "errno 101" in msg_l
+        ):
+            logger.warning(
+                "SMTP unreachable (Render Free blocks SMTP). Add RESEND_API_KEY + RESEND_FROM, "
+                "or set SKIP_SMTP=true and remove SMTP_*, or use AUTO_VERIFY_EMAIL for demos. Link: %s",
                 verification_link,
             )
-        else:
-            logger.exception(
-                "SMTP failed for %s. Link was: %s",
-                email,
-                verification_link,
-            )
-        return False
-    except Exception:
+            return False
         logger.exception(
-            "SMTP failed for %s — check SMTP_* / Gmail App Password. Link: %s",
+            "SMTP failed for %s — check SMTP_* or use Resend. Link: %s",
             email,
             verification_link,
         )
