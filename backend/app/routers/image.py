@@ -12,9 +12,11 @@ import asyncio
 
 router = APIRouter()
 
-# Create uploads directory if it doesn't exist
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# Always resolve to backend/uploads (same folder StaticFiles uses in main.py), not process cwd
+_UPLOADS_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "uploads")
+)
+os.makedirs(_UPLOADS_DIR, exist_ok=True)
 
 @router.post("/upload", response_model=ImageResponse)
 async def upload_image(
@@ -40,7 +42,7 @@ async def upload_image(
     file_extension = os.path.splitext(file.filename)[1] if file.filename else '.jpg'
     image_id = str(uuid.uuid4())
     filename = f"{image_id}{file_extension}"
-    file_path = os.path.join(UPLOAD_DIR, filename)
+    file_path = os.path.join(_UPLOADS_DIR, filename)
     
     # Save file
     try:
@@ -102,9 +104,9 @@ async def predict_image(
     return ImageResponse(**updated_image)
 
 def _local_image_path(image_doc):
-    # Stored path is like "/uploads/<file>"; convert to filesystem path
-    rel = image_doc["image_path"].lstrip("/")
-    return os.path.join(os.getcwd(), rel)
+    # Stored path is "/uploads/<file>"; match _UPLOADS_DIR used for saves
+    name = os.path.basename(image_doc["image_path"])
+    return os.path.join(_UPLOADS_DIR, name)
 
 async def run_model_in_executor(image):
     """Execute model inference in a thread to keep FastAPI event loop responsive."""

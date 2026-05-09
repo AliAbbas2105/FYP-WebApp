@@ -93,7 +93,16 @@ function Signup() {
       }
       
       const response = await api.post('/auth/signup', payload)
-      setSuccessMessage(response.data.message || 'Account created successfully! Please check your email to verify your account.')
+      let msg =
+        response.data.message ||
+        'Account created successfully! Please check your email to verify your account.'
+      if (response.data.email_sent === false) {
+        msg +=
+          ' We could not send the verification email (SMTP not configured on the server). ' +
+          'In Render: set SMTP_USER and SMTP_PASSWORD (Gmail needs an App Password). ' +
+          'Check Render logs for a line with the verification link, or set FRONTEND_URL to your Vercel URL.'
+      }
+      setSuccessMessage(msg)
       
       // Don't auto-redirect, let user read the message and manually go to login
       // They can click the link when ready

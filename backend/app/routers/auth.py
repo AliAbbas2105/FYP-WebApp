@@ -155,13 +155,16 @@ async def signup(user_data: SignupRequest):
     # Insert user
     await db.users.insert_one(user_doc)
     
-    # Send verification email
-    await send_verification_email(user_data.email, verification_token, user_data.username)
-    
+    # Send verification email (requires SMTP_USER + SMTP_PASSWORD on Render)
+    email_sent = await send_verification_email(
+        user_data.email, verification_token, user_data.username
+    )
+
     return {
         "message": "User created successfully. Please check your email to verify your account.",
         "user_id": user_id,
-        "email": user_data.email
+        "email": user_data.email,
+        "email_sent": email_sent,
     }
 
 @router.post("/login", response_model=TokenResponse)
@@ -222,31 +225,39 @@ async def login(login_data: LoginRequest):
 async def verify_email(token: str = Query(..., description="Email verification token")):
     """Verify user email with token"""
     db = get_database()
-    
-    # Clean and normalize the token
-    # FastAPI automatically URL-decodes query parameters, but we'll be explicit
-    # Strip any whitespace that might have been introduced
-    token = token.strip()
-    print("TOKEN_FROM_FRONTEND:", repr(token))
-    
-    # Try to find user by verification token (exact match)
+
+    token = unquote(token.strip())
+
     user = await db.users.find_one({"verification_token": token})
-    #need to add validation checks here, rest code is in whatsapp message
     if not user:
-        print(f"User not found by exact token: {token}")
-    
-    # Update user to verified
-    await db.users.update_one(
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification link.",
+        )
+
+    expiry = user.get("verification_token_expiry")
+    if expiry and datetime.utcnow() > expiry:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification link has expired. Please sign up again or contact support.",
+        )
+
+    result = await db.users.update_one(
         {"verification_token": token},
         {
             "$set": {
                 "is_verified": True,
                 "verification_token": None,
-                "verification_token_expiry": None
+                "verification_token_expiry": None,
             }
-        }
+        },
     )
-    
+    if result.modified_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not verify email. Please try again.",
+        )
+
     return {"message": "Email verified successfully"}
 
 @router.get("/me", response_model=UserResponse)

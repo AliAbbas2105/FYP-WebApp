@@ -38,9 +38,11 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(image.router, prefix="/image", tags=["image"])
 
-# Serve uploaded images
-if os.path.exists("uploads"):
-    app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+# Serve uploaded images (ensure dir exists on fresh Render deploys)
+_uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
+_uploads_dir = os.path.abspath(_uploads_dir)
+os.makedirs(_uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=_uploads_dir), name="uploads")
 
 @app.on_event("startup")
 async def startup_event():
