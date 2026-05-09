@@ -20,6 +20,7 @@ cors_origins = [
     "http://localhost:5173",
     "https://gastricfrontend.vercel.app",
     *frontend_urls,
+    
 ]
 allow_origins = list(dict.fromkeys(cors_origins))
 
