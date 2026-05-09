@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+MONGODB_URL = os.getenv("MONGODB_URL")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "gastric_cancer_fl")
 
 client: AsyncIOMotorClient = None
@@ -14,6 +14,8 @@ database = None
 async def connect_to_mongo():
     global client, database
     try:
+        if not MONGODB_URL:
+            raise ValueError("MONGODB_URL is not set. Add your MongoDB Atlas URL in backend/.env")
         client = AsyncIOMotorClient(MONGODB_URL)
         database = client[DATABASE_NAME]
         # Test connection

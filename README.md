@@ -54,7 +54,7 @@ pip install -r requirements.txt
 Create `backend/.env`:
 
 ```env
-MONGODB_URL=mongodb://localhost:27017
+MONGODB_URL=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/gastric_cancer_fl?retryWrites=true&w=majority
 DATABASE_NAME=gastric_cancer_fl
 SECRET_KEY=replace_with_random_secret
 
