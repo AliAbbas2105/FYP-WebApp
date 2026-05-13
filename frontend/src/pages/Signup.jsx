@@ -100,7 +100,7 @@ function Signup() {
       if (delivery === 'auto_verified') {
         msg = response.data.message || msg
       } else if (delivery === 'verification_skipped') {
-        msg = response.data.message || msg
+        msg = 'Account created successfully! Proceed to login'
       } else if (delivery === 'disabled' || response.data.email_sent === false) {
         msg +=
           ' No verification email was sent. On Render Free, SMTP is often blocked — add RESEND_API_KEY (resend.com) or set AUTO_VERIFY_EMAIL=true on the server for a demo-only skip. Check server logs for details.'

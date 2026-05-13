@@ -113,8 +113,11 @@ async def signup(user_data: SignupRequest, background_tasks: BackgroundTasks):
                 detail="Doctor role requires specialization and hospital_name"
             )
     
+    # Normalize email for storage and whitelist matching
+    email_norm = user_data.email.strip()
+
     # Check if email already exists
-    existing_user = await db.users.find_one({"email": user_data.email})
+    existing_user = await db.users.find_one({"email": email_norm})
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -139,7 +142,7 @@ async def signup(user_data: SignupRequest, background_tasks: BackgroundTasks):
     hashed_password = get_password_hash(user_data.password)
 
     use_auto_verify = is_auto_verify_signup()
-    needs_inbox_verification = _email_requires_inbox_verification(user_data.email)
+    needs_inbox_verification = _email_requires_inbox_verification(email_norm)
 
     if use_auto_verify:
         verification_token = None
@@ -156,18 +159,28 @@ async def signup(user_data: SignupRequest, background_tasks: BackgroundTasks):
         verification_token_expiry = None
         is_verified = True
 
-    # Create user document
-    user_doc = {
+    # Create user document (non-whitelist: no token/expiry, created_at null per Resend trial policy)
+    user_doc: dict = {
         "user_id": user_id,
         "username": user_data.username,
-        "email": user_data.email,
+        "email": email_norm,
         "role": user_data.role,
         "hashed_password": hashed_password,
         "is_verified": is_verified,
-        "verification_token": verification_token,
-        "verification_token_expiry": verification_token_expiry,
-        "created_at": datetime.utcnow()
     }
+
+    if use_auto_verify:
+        user_doc["verification_token"] = None
+        user_doc["verification_token_expiry"] = None
+        user_doc["created_at"] = datetime.utcnow()
+    elif needs_inbox_verification:
+        user_doc["verification_token"] = verification_token
+        user_doc["verification_token_expiry"] = verification_token_expiry
+        user_doc["created_at"] = datetime.utcnow()
+    else:
+        user_doc["verification_token"] = None
+        user_doc["verification_token_expiry"] = None
+        user_doc["created_at"] = None
     
     # Add role-specific fields
     if user_data.role == "patient":
@@ -184,12 +197,12 @@ async def signup(user_data: SignupRequest, background_tasks: BackgroundTasks):
     if use_auto_verify:
         logger.warning(
             "AUTO_VERIFY_EMAIL is on: user %s marked verified without email — for demos only.",
-            user_data.email,
+            email_norm,
         )
         return {
             "message": "Account created. Email verification is skipped (AUTO_VERIFY_EMAIL). You can log in now.",
             "user_id": user_id,
-            "email": user_data.email,
+            "email": email_norm,
             "email_delivery": "auto_verified",
             "email_sent": None,
         }
@@ -198,33 +211,33 @@ async def signup(user_data: SignupRequest, background_tasks: BackgroundTasks):
         if not is_email_delivery_configured():
             logger.warning(
                 "Signup for %s (whitelist): no Resend/SMTP; verification email not sent.",
-                user_data.email,
+                email_norm,
             )
             return {
                 "message": "User created successfully. Please check your email to verify your account.",
                 "user_id": user_id,
-                "email": user_data.email,
+                "email": email_norm,
                 "email_delivery": "disabled",
                 "email_sent": False,
             }
         background_tasks.add_task(
             send_verification_email,
-            user_data.email,
+            email_norm,
             verification_token,
             user_data.username,
         )
         return {
             "message": "User created successfully. A verification email is being sent — check your inbox and spam folder.",
             "user_id": user_id,
-            "email": user_data.email,
+            "email": email_norm,
             "email_delivery": "queued",
             "email_sent": None,
         }
 
     return {
-        "message": "Account created. You can log in now (email verification is not required for this address).",
+        "message": "Account created successfully! Proceed to login",
         "user_id": user_id,
-        "email": user_data.email,
+        "email": email_norm,
         "email_delivery": "verification_skipped",
         "email_sent": None,
     }
@@ -234,8 +247,9 @@ async def login(login_data: LoginRequest):
     """Login user and return JWT token"""
     db = get_database()
     
-    # Find user by email
-    user = await db.users.find_one({"email": login_data.email})
+    # Find user by email (match stored normalized email)
+    login_email = login_data.email.strip()
+    user = await db.users.find_one({"email": login_email})
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
