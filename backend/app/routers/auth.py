@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Query, BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer
 from datetime import datetime, timedelta
+import os
 import uuid
 from urllib.parse import unquote
 from app.models.user import (
@@ -31,6 +32,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+# Resend trial: only one inbox can receive mail — only this address gets a verification email + login gate.
+# Override with env EMAIL_VERIFICATION_WHITELIST if needed.
+def _email_requires_inbox_verification(email: str) -> bool:
+    target = os.getenv("EMAIL_VERIFICATION_WHITELIST", "l226703@lhr.nu.edu.pk").strip().lower()
+    return email.strip().lower() == target
+
 
 # Static doctor directory; in production this should be a proper provider search
 NEARBY_DOCTORS = [
@@ -129,16 +137,24 @@ async def signup(user_data: SignupRequest, background_tasks: BackgroundTasks):
     
     # Hash password
     hashed_password = get_password_hash(user_data.password)
-    
-    # Verification: real email (Resend/SMTP) unless AUTO_VERIFY_EMAIL is set for demo deploys
+
     use_auto_verify = is_auto_verify_signup()
-    verification_token = None
-    verification_token_expiry = None
-    if not use_auto_verify:
+    needs_inbox_verification = _email_requires_inbox_verification(user_data.email)
+
+    if use_auto_verify:
+        verification_token = None
+        verification_token_expiry = None
+        is_verified = True
+    elif needs_inbox_verification:
         verification_token = generate_verification_token()
         verification_token_expiry = datetime.utcnow() + timedelta(
             hours=EMAIL_VERIFICATION_EXPIRY_HOURS
         )
+        is_verified = False
+    else:
+        verification_token = None
+        verification_token_expiry = None
+        is_verified = True
 
     # Create user document
     user_doc = {
@@ -147,7 +163,7 @@ async def signup(user_data: SignupRequest, background_tasks: BackgroundTasks):
         "email": user_data.email,
         "role": user_data.role,
         "hashed_password": hashed_password,
-        "is_verified": use_auto_verify,
+        "is_verified": is_verified,
         "verification_token": verification_token,
         "verification_token_expiry": verification_token_expiry,
         "created_at": datetime.utcnow()
@@ -178,32 +194,38 @@ async def signup(user_data: SignupRequest, background_tasks: BackgroundTasks):
             "email_sent": None,
         }
 
-    if not is_email_delivery_configured():
-        logger.warning(
-            "Signup for %s: no Resend/SMTP config; verification email not sent. Set RESEND_API_KEY or AUTO_VERIFY_EMAIL=true.",
+    if needs_inbox_verification:
+        if not is_email_delivery_configured():
+            logger.warning(
+                "Signup for %s (whitelist): no Resend/SMTP; verification email not sent.",
+                user_data.email,
+            )
+            return {
+                "message": "User created successfully. Please check your email to verify your account.",
+                "user_id": user_id,
+                "email": user_data.email,
+                "email_delivery": "disabled",
+                "email_sent": False,
+            }
+        background_tasks.add_task(
+            send_verification_email,
             user_data.email,
+            verification_token,
+            user_data.username,
         )
         return {
-            "message": "User created successfully. Please check your email to verify your account.",
+            "message": "User created successfully. A verification email is being sent — check your inbox and spam folder.",
             "user_id": user_id,
             "email": user_data.email,
-            "email_delivery": "disabled",
-            "email_sent": False,
+            "email_delivery": "queued",
+            "email_sent": None,
         }
 
-    # Do not block the HTTP response on SMTP; Resend is fast, still queue both
-    background_tasks.add_task(
-        send_verification_email,
-        user_data.email,
-        verification_token,
-        user_data.username,
-    )
-
     return {
-        "message": "User created successfully. A verification email is being sent — check your inbox and spam folder.",
+        "message": "Account created. You can log in now (email verification is not required for this address).",
         "user_id": user_id,
         "email": user_data.email,
-        "email_delivery": "queued",
+        "email_delivery": "verification_skipped",
         "email_sent": None,
     }
 
